@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config()
 const app = express();
@@ -10,7 +11,6 @@ app.use(cors());
 app.use(express.json());
 
 console.log(process.env.DB_PASS);
-
 
 // const { MongoClient, ServerApiVersion } = require('mongodb');
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xceqs5c.mongodb.net/?retryWrites=true&w=majority`;
@@ -24,14 +24,42 @@ const client = new MongoClient(uri, {
     }
 });
 
+const verifyJWT = (req, res, next) => {
+    console.log('Hitting Verify JWT');
+    console.log('From verifyJWT = ',req.headers.authorization);
+    const authorization = req.headers.authorization;
+    if (!authorization) {
+        return res.status(401).send({ error: true, message: 'unauthorized access' });
+    }
+    const token = authorization.split(' ')[1];
+    console.log('\ntoken inside verify JWT = ', token);
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        if (err) {
+            return res.status(401).send({ error: true, message: 'unauthorized access' })
+        }
+        req.decoded = decoded;
+        next();
+    })
+}
+
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
+        // await client.connect();
 
 
         const serviceCollection = client.db('carDoctor').collection('services');
         const bookingCollection = client.db('carDoctor').collection('bookings');
+
+
+        // jwt
+        app.post('/jwt', (req, res) => {
+            const user = req.body;
+            console.log(user);
+            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+            console.log(token);
+            res.send({ token });
+        })
 
         app.get('/services', async (req, res) => {
             const cursor = serviceCollection.find();
@@ -52,11 +80,21 @@ async function run() {
             res.send(result);
         })
 
+        // bookings routes
+        app.get('/bookings', verifyJWT, async (req, res) => {
+            
+            // console.log('req.body = ', req.query);
+            // console.log('req.body = ', req.headers);
+            // console.log('req.body Authorization = ', req.headers.authorization);
+            // console.log('req.body.email = ', req.query.email);
+            
+            const decoded = req.decoded;
+            console.log('\ncame back after verify', decoded);
+            
+            if (decoded.email !== req.query.email) {
+                return res.status(403).send({ error: 1, message: 'forbidden access' })
+            }
 
-        // bookings 
-        app.get('/bookings', async (req, res) => {
-            console.log('req.body = ', req.query);
-            console.log('req.body.email = ', req.query.email);
             let query = {};
             if (req.query?.email) {
                 query = { email: req.query.email }
@@ -96,7 +134,7 @@ async function run() {
 
 
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
+        // await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
